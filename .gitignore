@@ -1,4 +1,11 @@
 # pixi environments
 .pixi/*
 !.pixi/config.toml
-data/input/test_images/*
+data/*
+*/__pycache__/*
+*.pyc*
+docs/dev/*
+
+# Python キャッシュとコンパイル済みファイルを無視
+__pycache__/
+*.py[cod]
