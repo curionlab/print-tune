@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 
@@ -22,13 +23,17 @@ def _keys_to_mask(active_keys: list[str]) -> torch.Tensor:
     active = set(active_keys)
     return torch.tensor([k in active for k in PARAM_KEYS_V1], dtype=torch.bool)
 
-def propose_from_session_for_round(session, next_round_index: int) -> NextProposal:
+def propose_from_session_for_round(
+    session,
+    next_round_index: int,
+    rubric: Optional[str] = None,
+) -> NextProposal:
     # 1. GP学習データの構築
     data = build_torch_data(session)
     model = fit_pairwise_gp(data.train_X, data.train_comp)
 
     # 2. スケジュールとセンターの決定
-    sched = schedule_for_round(next_round_index)
+    sched = schedule_for_round(next_round_index, rubric=rubric)
     
     # center抽出: estimate_best_params は dict を返すので list[float] に変換
     g_best = estimate_best_params(session)

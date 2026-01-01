@@ -11,7 +11,7 @@ from .optimizer.candidate_factory import make_candidates_from_X, x_to_globals
 from .optimizer.param_space_v1 import PARAM_KEYS_V1
 from .botorch.update_loop import propose_from_session_for_round
 
-Intent = Literal["pairwise_explore", "rejudge", "reprint"]
+Intent = Literal["pairwise_explore", "reprint"]
 
 def _next_round_index(session: SessionRecord) -> int:
     return len(session.rounds) + 1
@@ -41,7 +41,7 @@ def make_next_round(
 
     # 1. pairwise_explore: BoTorch提案を使う（基本ルート）
     if intent == "pairwise_explore":
-        proposal = propose_from_session_for_round(session, round_index)
+        proposal = propose_from_session_for_round(session, round_index, rubric=rubric)
         
         cands = make_candidates_from_X(
             round_id=rid,
@@ -97,7 +97,7 @@ def make_next_round(
         )
         return append_round(session, rr)
     """
-    
+
     # 3. reprint: 探索幅を増やして少し動かす（簡易ロジック）
     # ※ 本来は軸スケジュールと連動させるべきだが、一旦P0ロジック（Exposure中心）を維持しつつglobals対応
     
