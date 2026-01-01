@@ -1,4 +1,3 @@
-```markdown
 # PrintTune
 
 PrintTune は、Photoshop のソフトプルーフや ICC 運用が難しい（または環境制約でできない）趣味ユーザー向けに、**「画面で見た印象」に近いプリント**へ寄せるための、比較選択ベースのチューニングアプリ（PoC）です。
@@ -92,8 +91,6 @@ print-tune/
 ---
 
 ## Roadmap（次の改善）
-
-- reprint の戦略を軸スケジュール（active_keys/micro-delta）と整合させて洗練。
 - ログ/スキーマ検証・テスト追加（PoC → 運用フェーズ）。
 
 ---
