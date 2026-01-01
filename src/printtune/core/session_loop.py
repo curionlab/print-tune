@@ -3,14 +3,16 @@ from __future__ import annotations
 
 from dataclasses import replace
 from typing import Literal, Optional
+
 import random
 
 from .log_types import SessionRecord, RoundRecord, now_iso
 from .ids import RoundId, SessionId
-from .optimizer.candidate_factory import make_candidates_from_X, x_to_globals
+from .optimizer.candidate_factory import make_candidates_from_X
 from .optimizer.param_space_v1 import PARAM_KEYS_V1
-from .botorch.update_loop import propose_from_session_for_round
-from .policy_axes import schedule_for_round
+from .botorch.update_loop import propose_from_session_for_round, propose_reprint_pair
+from .policy_axes import RUBRIC_TO_PRIORITY_KEYS, schedule_for_round
+
 
 Intent = Literal["pairwise_explore", "reprint"]
 
@@ -63,7 +65,7 @@ def make_next_round(
     # 1. pairwise_explore: BoTorch提案を使う（基本ルート）
     if intent == "pairwise_explore":
         phase_round_index = _phase_round_index_for_intent(session, intent="pairwise_explore")
-        proposal = propose_from_session_for_round(session, phase_round_index)
+        proposal = propose_from_session_for_round(session, phase_round_index, rubric=rubric)
 
         cands = make_candidates_from_X(
             round_id=rid,
@@ -87,107 +89,98 @@ def make_next_round(
         )
         return append_round(session, rr)
 
-    # 直前ラウンド情報を取得（rejudge/reprint用）
+    # 2) reprint: BoTorchベースの「制約付き再提案」へ移行
     prev = session.rounds[-1]
-    #prev_X: list[list[float]] = []
-    
-    # 候補が2つ以上ある前提だが、万一足りない場合は安全策で複製するなどのガードが必要かも
-    # ここでは既存ロジック通り先頭2つを取得
-    #source_cands = prev.candidates if len(prev.candidates) >= 2 else prev.candidates * 2
-    #for c in source_cands[:2]:
-    #    prev_X.append(_extract_x_from_candidate(c))
+    phase_round_index = _phase_round_index_for_intent(session, intent="reprint")
 
-
-    # 2. rejudge: 直前と同じXで再生成（スロット振り直し等は make_candidates_from_X が新規ID発行で対応）
-    # dev3で、rejudgeは観点を指定したchosenの位置づけに変更したため、削除
-    """
-    if intent == "rejudge":
-        # 直前の全候補をそのままコピーしてIDだけ振り直す
-        # (OAなら4つ、Pairwiseなら2つ、そのまま引き継ぐ)
-        prev_X = [_extract_x_from_candidate(c) for c in prev.candidates]
-        slots = [c.slot for c in prev.candidates] # スロット名も引き継ぐ
-        
-        cands = make_candidates_from_X(rid, slots=slots, X=prev_X)
-
-        rr = RoundRecord(
-            round_id=rid.value,
-            round_index=round_index,
-            created_at=now_iso(),
-            candidates=cands,
-            mode=prev.mode,
-            purpose="rejudge",
-            rubric=rubric,
-            delta_scale=1.0,
-            meta={"source_round": prev.round_index},  # 追跡用meta
-        )
-        return append_round(session, rr)
-    """
-
-    # 3. reprint: 探索幅を増やして少し動かす（簡易ロジック）
-    # ※ 本来は軸スケジュールと連動させるべきだが、一旦P0ロジック（Exposure中心）を維持しつつglobals対応
-    
-    delta = 0.35 * float(delta_scale)
-    def clamp(v: float) -> float:
-        return max(-2.0, min(2.0, v))
-
-    # ★ OAモードの場合の特別処理 ★
     if prev.mode == "oa":
-        # 全ての候補に対して、Exposure(index 0)を一律にずらす（例：全体的に明るく/暗く）
-        # ※ 本当は各候補の分布を広げる等の戦略もあり得るが、
-        #    Reprintの動機は「全体的にダメ（暗すぎ/色変）」が多いので、一律シフトが直感的。
-        
-        new_X = []
+        # OA reprint は「4択で方向性を絞る」ためのものなので、
+        # 直交表(=4候補の相対差)を壊さずに "全体を同じ方向へ" 動かす。
+        # both_bad 等で正解(center)が無い状態でも意味があるように、ランダムは使わない。
+
+        # scheduleは rubric を反映したactive_keysに寄せる（優先キーの並び替え等）
+        phase_round_index = _phase_round_index_for_intent(session, intent="reprint")
+        sched = schedule_for_round(phase_round_index, rubric=rubric)
+
+        # どの軸を動かすか:
+        # - exposure_stops が active ならそれ（「全体がダメ」を救う最優先）
+        # - なければ scheduleの先頭キー（rubric反映後の並び）を採用
+        if "exposure_stops" in list(sched.active_keys):
+            shift_key = "exposure_stops"
+        else:
+            shift_key = list(sched.active_keys)[0]
+
+        # シフト方向は決定的に交互 (+, -, +, ...) にする（ランダム禁止）
+        n_oa_reprint = sum(
+            1
+            for r in session.rounds
+            if r.purpose == "reprint" and getattr(r, "mode", None) == "oa"
+        )
+        shift_sign = 1.0 if (n_oa_reprint % 2 == 0) else -1.0
+
+        # 旧ノウハウ: OA reprint は delta=0.35 * delta_scale を使う
+        shift_delta = 0.35 * float(delta_scale)
+
+        key_to_index = {k: i for i, k in enumerate(PARAM_KEYS_V1)}
+        idx = key_to_index.get(shift_key, 0)
+
+        def clamp(v: float) -> float:
+            return max(-2.0, min(2.0, v))
+
+        X_next: list[list[float]] = []
         for c in prev.candidates:
             base = _extract_x_from_candidate(c)
-            # 全候補の Exposure (index 0) に delta を加算
-            # deltaが正なら全体を明るく、負なら暗くする方向だが、
-            # reprintのdeltaは「大きさ」なので、方向はランダムか固定か悩ましい。
-            # ここでは「現状の平均」を見て...といきたいが、
-            # シンプルに「Exposureを +delta する版」を出す（明るくしてみる）
-            # もしくは、L4の各点に対して「分布を広げる」方がOAらしいか？
-            
-            # 案: 単純に「前回の全候補の Exposure に delta を足す」
-            # (暗すぎた場合に有効。明るすぎた場合は逆だが、UIで方向指定がないので正方向に振る)
             shifted = [
-                clamp(base[i] + (delta if i == 0 else 0.0)) 
+                clamp(base[i] + (shift_sign * shift_delta if i == idx else 0.0))
                 for i in range(len(base))
             ]
-            new_X.append(shifted)
-            
-        cands = make_candidates_from_X(rid, slots=[c.slot for c in prev.candidates], X=new_X)
-        
+            X_next.append(shifted)
+
+        slots = [c.slot for c in prev.candidates]
+        schedule_meta = {
+            "active_keys": list(sched.active_keys),
+            "delta": float(sched.delta),
+            "micro_ratio": float(sched.micro_ratio),
+            "center_source": "oa_global_shift",
+            "rubric": rubric,
+            "shift_key": shift_key,
+            "shift_sign": shift_sign,
+            "shift_delta": shift_delta,
+        }
     else:
-        # Pairwise (2候補) の場合
-        # 直前の A (index 0) を基準に、±delta で開き直す（既存ロジック）
-        prev_X_A = _extract_x_from_candidate(prev.candidates[0])
-        X2 = [
-            [clamp(prev_X_A[i] + (delta if i == 0 else 0.0)) for i in range(len(prev_X_A))],
-            [clamp(prev_X_A[i] - (delta if i == 0 else 0.0)) for i in range(len(prev_X_A))],
-        ]
-        cands = make_candidates_from_X(rid, slots=["A", "B"], X=X2)
+        # pairwiseは2候補
+        seed = random.randint(0, 2**31 - 1)
+        p = propose_reprint_pair(
+            session=session,
+            phase_round_index=phase_round_index,
+            rubric=rubric,
+            delta_scale=float(delta_scale),
+            q=2,
+            seed=seed,
+        )
+        X_next = p.X_next
+        slots = ["A", "B"]
+        schedule_meta = dict(p.schedule)
+        schedule_meta["seeds"] = [seed]
+        schedule_meta["q_total"] = 2
 
-    phase_round_index = _phase_round_index_for_intent(session, intent="reprint")
-    sched = schedule_for_round(phase_round_index, rubric=rubric)
-
-    schedule_meta = {
-        "active_keys": list(sched.active_keys),
-        "delta": sched.delta,
-        "micro_ratio": sched.micro_ratio,
-        "center_source": "reprint_simple",
-    }
+    cands = make_candidates_from_X(
+        round_id=rid,
+        slots=slots,
+        X=X_next,
+    )
 
     rr = RoundRecord(
         round_id=rid.value,
         round_index=round_index,
         created_at=now_iso(),
         candidates=cands,
-        mode=prev.mode, # モード継承 (OAならOAのまま)
+        mode=prev.mode,
         purpose="reprint",
         rubric=rubric,
         delta_scale=float(delta_scale),
         meta={
             "source_round": prev.round_index,
-            "delta_applied": delta,
             "phase_round_index": phase_round_index,
             "schedule": schedule_meta,
         },

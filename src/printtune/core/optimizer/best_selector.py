@@ -1,8 +1,10 @@
 # src/printtune/core/optimizer/best_selector.py
 from __future__ import annotations
+
+import warnings
+
 import torch
 from ..log_types import SessionRecord
-from .center import extract_last_chosen_center
 from .param_space_v1 import PARAM_KEYS_V1
 
 def extract_last_chosen_globals(session: SessionRecord) -> dict:
@@ -15,11 +17,14 @@ def extract_last_chosen_globals(session: SessionRecord) -> dict:
             slot = j["chosen_slot"]
             for c in rr.candidates:
                 if c.slot == slot:
-                    return dict(c.params["globals"])
+                    g = c.params["globals"]
+                    return {k: float(g[k]) for k in PARAM_KEYS_V1}
+                    
     # fallback: last round first candidate
-    return dict(session.rounds[-1].candidates[0].params["globals"])
+    g = session.rounds[-1].candidates[0].params["globals"]
+    return {k: float(g[k]) for k in PARAM_KEYS_V1}
 
-def estimate_best_params(session: SessionRecord) -> dict:
+def estimate_best_params(session: SessionRecord) -> dict[str, float]:
     """
     PairwiseGPの事後平均を最大化するパラメータを推定する。
     
@@ -56,20 +61,16 @@ def estimate_best_params(session: SessionRecord) -> dict:
         # 3. 事後平均の計算（方法A: 観測済み候補から選ぶ）
         with torch.no_grad():
             posterior = model.posterior(data.train_X)
-            mean = posterior.mean  # shape: (N, 1)
-            best_idx = torch.argmax(mean).item()
+            mean = posterior.mean
+            mean_1d = mean.squeeze() #posterior.mean のshape揺れに備えて squeeze() してからargmax。
+            best_idx = int(torch.argmax(mean_1d).item())
             best_X = data.train_X[best_idx]
         
         # 4. globals形式に変換
-        best_dict = {}
-        for i, key in enumerate(PARAM_KEYS_V1):
-            best_dict[key] = float(best_X[i].item())
-        
-        return best_dict
+        return {k: float(best_X[i].item()) for i, k in enumerate(PARAM_KEYS_V1)}
         
     except Exception as e:
         # 数値計算エラー等の場合は安全にフォールバック
-        import warnings
         warnings.warn(
             f"GP estimation failed ({type(e).__name__}: {e}), "
             f"falling back to last_chosen.",
