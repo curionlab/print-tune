@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import torch
 from botorch.optim import optimize_acqf
 from botorch.acquisition.preference import AnalyticExpectedUtilityOfBestOption
+from .bounds_builder import build_bounds
 
 @dataclass(frozen=True)
 class ProposedBatch:
@@ -12,13 +13,16 @@ class ProposedBatch:
 
 def propose_next_pair(
     model,
-    bounds: torch.Tensor,
+    center: torch.Tensor,
+    active_mask: torch.Tensor,
+    delta: float,
+    micro_ratio: float = 0.15,
     q: int = 2,
     num_restarts: int = 10,
     raw_samples: int = 128,
 ) -> ProposedBatch:
-    # EUBOは preference_bo tutorialで示される主要手法 [web:235]
-    acqf = AnalyticExpectedUtilityOfBestOption(pref_model=model)
+    acqf = AnalyticExpectedUtilityOfBestOption(pref_model=model)  # [web:235]
+    bounds = build_bounds(center=center, active_mask=active_mask, delta=delta, micro_ratio=micro_ratio)
 
     X_next, _ = optimize_acqf(
         acq_function=acqf,

@@ -8,10 +8,11 @@ from typing import Literal
 
 from .ids import SessionId, RoundId, CandidateId
 from .log_types import SessionRecord, RoundRecord, Candidate, now_iso
-from .optimizer.oa_initial_design import L4
+from .optimizer.oa_initial_design import L4, factors_to_globals
 from .optimizer.candidate_factory import make_candidates_from_X
 from .imaging.sheet_layout import SheetCell, render_sheet_2x2
-from .imaging.params_adapter import candidate_to_simple_params
+from .imaging.params_adapter import candidate_to_global_params
+from .imaging.pipeline import render_image_with_global_params
 from .imaging.transform import apply_simple_transform
 from .io.paths import artifacts_dir
 from .botorch.dataset import build_comparisons_from_choice
@@ -34,7 +35,11 @@ def create_round1(session: SessionRecord) -> RoundRecord:
     candidates: list[Candidate] = []
     for spec in L4:
         cid = CandidateId.new(rid, slot=spec.slot)
-        candidates.append(Candidate(candidate_id=cid.value, slot=spec.slot, params={"oa_factors": spec.factors}))
+        candidates.append(Candidate(
+            candidate_id=cid.value,
+            slot=spec.slot,
+            params={"globals": factors_to_globals(spec.factors)},
+        ))
     return RoundRecord(
         round_id=rid.value,
         round_index=1,
@@ -43,6 +48,11 @@ def create_round1(session: SessionRecord) -> RoundRecord:
         mode="oa",
         purpose="initial_oa",
         delta_scale=1.0,
+                meta={"schedule": {
+             "active_keys": ["exposure_stops", "contrast", "gamma", "temp"], # OAの意図もmetaに残すと丁寧
+             "delta": 1.0,
+             "micro_ratio": 0.0
+        }}
     )
 
 
@@ -53,8 +63,8 @@ def render_round_sheet(sample_img: Image.Image, round_rec: RoundRecord, out_dir:
     cells: list[SheetCell] = []
 
     for c in round_rec.candidates:
-        p = candidate_to_simple_params(c)
-        img_k = apply_simple_transform(sample_img, p)
+        gp = candidate_to_global_params(c)
+        img_k = render_image_with_global_params(sample_img, gp)
         cells.append(SheetCell(slot=c.slot, candidate_id=c.candidate_id, image=img_k))
 
     while len(cells) < 4:
@@ -70,6 +80,7 @@ def render_round_sheet(sample_img: Image.Image, round_rec: RoundRecord, out_dir:
     out_path = out_dir / f"round{round_rec.round_index:02d}_sheet.png"
     sheet.save(out_path, format="PNG")
     return out_path
+
 
 def _global_offset_for_round(session: SessionRecord, round_index: int) -> int:
     # round_indexは1始まり

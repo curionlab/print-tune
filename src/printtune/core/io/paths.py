@@ -17,3 +17,6 @@ def session_json_path(session_id: str) -> Path:
 
 def artifacts_dir(session_id: str) -> Path:
     return session_dir(session_id) / "artifacts"
+
+def best_params_json_path(session_id: str) -> Path:
+    return session_dir(session_id) / "best_params.json"

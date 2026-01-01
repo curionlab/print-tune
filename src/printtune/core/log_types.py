@@ -33,6 +33,8 @@ class RoundRecord:
     # {"kind":"undecidable","at":...,"rubric":"skin","next_action":"rejudge"}
     # {"kind":"both_bad","at":...,"rubric":"overall","next_action":"reprint"}
 
+    meta: dict = field(default_factory=dict)
+
 @dataclass(frozen=True)
 class SessionRecord:
     session_id: str
