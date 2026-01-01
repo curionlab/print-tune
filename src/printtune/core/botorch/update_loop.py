@@ -11,7 +11,7 @@ from .pairwise_gp_fit import fit_pairwise_gp
 from .propose_next import propose_next_pair
 from ..policy_axes import schedule_for_round
 from ..optimizer.param_space_v1 import PARAM_KEYS_V1
-from ..optimizer.best_selector import extract_last_chosen_globals
+from ..optimizer.best_selector import estimate_best_params
 
 @dataclass(frozen=True)
 class NextProposal:
@@ -30,8 +30,8 @@ def propose_from_session_for_round(session, next_round_index: int) -> NextPropos
     # 2. スケジュールとセンターの決定
     sched = schedule_for_round(next_round_index)
     
-    # center抽出: extract_last_chosen_globals は dict を返すので list[float] に変換
-    g_best = extract_last_chosen_globals(session)
+    # center抽出: estimate_best_params は dict を返すので list[float] に変換
+    g_best = estimate_best_params(session)
     center_list = [float(g_best[k]) for k in PARAM_KEYS_V1]
     center = torch.tensor(center_list, dtype=torch.float)
 
@@ -56,7 +56,7 @@ def propose_from_session_for_round(session, next_round_index: int) -> NextPropos
             "active_keys": list(sched.active_keys), 
             "delta": sched.delta, 
             "micro_ratio": sched.micro_ratio,
-            "center_source": "last_chosen"
+            "center_source": "posterior_mean"
         },
     )
 

@@ -13,7 +13,7 @@ from printtune.core.io.paths import (
 )
 from printtune.core.io.session_store import save_session, load_session
 from printtune.core.io.best_params_store import save_best_params, load_best_params
-from printtune.core.optimizer.best_selector import extract_last_chosen_globals
+from printtune.core.optimizer.best_selector import estimate_best_params
 from printtune.core.imaging.globals_adapter import globals_dict_to_params
 from printtune.core.imaging.load import load_image_rgb
 from printtune.core.imaging.pipeline import render_image_with_global_params
@@ -160,14 +160,14 @@ else:
         # 3. 保存 & Best Params 更新 & リロード
         save_session(sess_path, sess)
         
-        g = extract_last_chosen_globals(sess)
+        g = estimate_best_params(sess)
         save_best_params(best_params_json_path(sid), g)
         
         st.success("Saved. Reloading...")
         time.sleep(0.5)
         st.rerun()
 
-# --- [修正2] Round終了案内 ---
+# --- Round終了案内 ---
 if len(sess.rounds) >= STANDARD_ROUNDS:
     st.divider()
     st.success(f"🎉 標準ラウンド数（{STANDARD_ROUNDS}回）に到達しました！")
@@ -186,7 +186,7 @@ st.subheader("Verification & Download")
 
 # best params の手動保存ボタン（自動保存を入れたので必須ではないが、明示的にやりたい場合用）
 if st.button("Force save current best params"):
-    g = extract_last_chosen_globals(sess)
+    g = estimate_best_params(sess)
     save_best_params(best_params_json_path(sid), g)
     st.success("Best params updated.")
 
