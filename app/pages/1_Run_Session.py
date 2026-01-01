@@ -60,7 +60,7 @@ sess = load_session(sess_path)
 img = load_image_rgb(get_sample_image_path())
 out_dir = artifacts_dir(sid)
 
-# --- [修正4] Target Image Display ---
+# --- Target Image Display ---
 # ユーザーが目指すべき「正解（画面上の見た目）」を常に表示
 st.subheader("Target (Original Screen View)")
 st.caption("この画面上の見た目に合うように、印刷結果を選んでください。")
@@ -99,7 +99,7 @@ if is_judged:
 else:
     st.write("### Judgment")
     
-    # [修正1] st.form を廃止し、条件分岐が即座にUIに反映されるようにする
+    # st.form を廃止し、条件分岐が即座にUIに反映されるようにする
     slots = [c.slot for c in current.candidates]
     kind = st.radio("判定タイプ", options=["chosen", "undecidable", "both_bad"], horizontal=True, key=f"kind_{current.round_index}")
 
@@ -116,53 +116,58 @@ else:
         rubric = st.selectbox("観点（rubric）", ["overall","skin","neutral_gray","saturation","shadows","highlights"], key=f"rubric_{current.round_index}")
         
         if kind == "undecidable":
+            # undecidableの場合のネクストアクション
+            # rejudge: 今の候補の中から強引に選ぶ（あるいは見直す）
+            # reprint: 探索幅を広げてやり直す
             next_action = st.radio("次アクション", options=["rejudge", "reprint"], horizontal=True, key=f"action_{current.round_index}")
         else:
+            # both_bad は問答無用で reprint (探索やり直し)
             next_action = "reprint" # both_bad
             st.warning("both_bad: Reprint (探索幅を広げて再生成) します。")
 
+        # Actionごとの追加入力
         if next_action == "reprint":
             delta_scale = st.number_input(
                 "reprint: delta_scale (探索幅の拡大率)",
                 min_value=1.0, max_value=3.0, value=1.5, step=0.25, format="%.2f",
                 key=f"delta_{current.round_index}"
             )
+        else: # rejudge
+        # Rejudgeの場合、結局「どれが良いか」を選ばせる（判定を強制）
+            st.info("Rejudge: 違いの目立つ観点（Rubric）を指定して、近いものを選んで次に進みます。")
+            chosen = st.radio("ベスト（slot）", options=slots, horizontal=True, key=f"chosen_{current.round_index}_rejudge")
+   
 
     # アクションボタン
     btn_label = "決定して次へ進む"
-    if kind == "chosen":
+    if kind == "chosen" or (next_action == "rejudge"):
         btn_label = "決定 (Next Proposal)"
-    elif next_action == "rejudge":
-        btn_label = "決定 (Rejudge)"
     elif next_action == "reprint":
         btn_label = "決定 (Reprint)"
 
     if st.button(btn_label, type="primary"):
-        # 1. 判定保存 & 次ラウンド作成
-        sess = submit_judgment_and_maybe_create_next_round(
-            sess,
-            round_index=current.round_index,
-            kind=kind,
-            chosen_slot=chosen,
-            rubric=rubric,
-            next_action=next_action,
-            delta_scale=(float(delta_scale) if delta_scale is not None else 1.0),
-        )
-
-        # 2. Chosen時の自動進行 (EUBO提案)
-        if kind == "chosen":
-            if len(sess.rounds) < MAX_ROUNDS:
-                with st.spinner("Calculating next proposal (EUBO)..."):
-                    sess = make_next_round(sess, intent="pairwise_explore")
-            else:
+        # 1. 判定保存 & 次ラウンド生成 (全てusecasesに委譲)
+        # Spinnerを出して処理中であることを示す
+        with st.spinner("Processing judgment & calculating next proposal..."):
+            sess = submit_judgment_and_maybe_create_next_round(
+                sess,
+                round_index=current.round_index,
+                kind=kind,
+                chosen_slot=chosen,
+                rubric=rubric,
+                next_action=next_action,
+                delta_scale=(float(delta_scale) if delta_scale is not None else 1.0),
+            )
+        
+        # (以前の if kind == "chosen": make_next_round... ブロックは削除)
+        
+        if len(sess.rounds) >= 10: # MAX_ROUNDS定数参照推奨
                 st.warning("最大ラウンド数に達しました。")
 
-        # 3. 保存 & Best Params 更新 & リロード
+        # 2. 保存 & Best Params 更新 & リロード
         save_session(sess_path, sess)
-        
         g = estimate_best_params(sess)
         save_best_params(best_params_json_path(sid), g)
-        
         st.success("Saved. Reloading...")
         time.sleep(0.5)
         st.rerun()

@@ -74,6 +74,8 @@ def make_next_round(
 
 
     # 2. rejudge: 直前と同じXで再生成（スロット振り直し等は make_candidates_from_X が新規ID発行で対応）
+    # dev3で、rejudgeは観点を指定したchosenの位置づけに変更したため、削除
+    """
     if intent == "rejudge":
         # 直前の全候補をそのままコピーしてIDだけ振り直す
         # (OAなら4つ、Pairwiseなら2つ、そのまま引き継ぐ)
@@ -94,7 +96,8 @@ def make_next_round(
             meta={"source_round": prev.round_index},  # 追跡用meta
         )
         return append_round(session, rr)
-
+    """
+    
     # 3. reprint: 探索幅を増やして少し動かす（簡易ロジック）
     # ※ 本来は軸スケジュールと連動させるべきだが、一旦P0ロジック（Exposure中心）を維持しつつglobals対応
     

@@ -30,15 +30,25 @@ def estimate_best_params(session: SessionRecord) -> dict:
     Returns:
         globals形式のパラメータ辞書
     """
-    # 1. データ構築と検証
+    # 比較データが存在しない場合は即座にフォールバック
+    # comparisons_global が空、または候補が少なすぎる場合
+    if not session.comparisons_global:
+        return extract_last_chosen_globals(session)
+    
+    # すべてのラウンドの候補数を合計（train_Xのサイズ）
+    total_candidates = sum(len(r.candidates) for r in session.rounds)
+    if total_candidates < 2:
+        return extract_last_chosen_globals(session)
+
     try:
+        # 1. データ構築
         from ..botorch.build_data import build_torch_data
         data = build_torch_data(session)
         
-        # 比較データがない場合はフォールバック
-        if data.train_X.shape[0] == 0 or data.train_comp.shape[0] == 0:
+        # 念のため再チェック（build_torch_data内でのデータ処理結果が空の可能性）
+        if data.train_X.shape[0] < 2 or data.train_comp.shape[0] < 1:
             return extract_last_chosen_globals(session)
-        
+
         # 2. GPモデル学習
         from ..botorch.pairwise_gp_fit import fit_pairwise_gp
         model = fit_pairwise_gp(data.train_X, data.train_comp)
