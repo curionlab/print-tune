@@ -10,6 +10,7 @@ from .ids import RoundId, SessionId
 from .optimizer.candidate_factory import make_candidates_from_X, x_to_globals
 from .optimizer.param_space_v1 import PARAM_KEYS_V1
 from .botorch.update_loop import propose_from_session_for_round
+from .policy_axes import schedule_for_round
 
 Intent = Literal["pairwise_explore", "reprint"]
 
@@ -30,6 +31,26 @@ def _extract_x_from_candidate(c) -> list[float]:
         raise ValueError("candidate params missing 'globals'")
     return [float(g[k]) for k in PARAM_KEYS_V1]
 
+def _count_pairwise_explore(session: SessionRecord) -> int:
+    return sum(1 for r in session.rounds if r.purpose == "pairwise_explore")
+
+def _phase_round_index_for_intent(session: SessionRecord, intent: str) -> int:
+    """
+    SCHEDULE用の段階(round_index)を返す。
+    - pairwise_explore: 初回はRound2相当、以降はexplore回数に応じて 2,3,4,5... と進む。
+    - reprint: 段階を進めない（現在段階を維持）。
+    """
+    n_explore = _count_pairwise_explore(session)
+
+    if intent == "pairwise_explore":
+        # 初回exploreはRound2相当
+        return n_explore + 2
+    if intent == "reprint":
+        # 現在段階を維持（OAなら1、explore済みなら2,3,...）
+        return n_explore + 1
+
+    raise ValueError(f"unknown intent: {intent}")
+
 def make_next_round(
     session: SessionRecord,
     intent: Intent,
@@ -41,8 +62,9 @@ def make_next_round(
 
     # 1. pairwise_explore: BoTorch提案を使う（基本ルート）
     if intent == "pairwise_explore":
-        proposal = propose_from_session_for_round(session, round_index, rubric=rubric)
-        
+        phase_round_index = _phase_round_index_for_intent(session, intent="pairwise_explore")
+        proposal = propose_from_session_for_round(session, phase_round_index)
+
         cands = make_candidates_from_X(
             round_id=rid,
             slots=["A", "B"],
@@ -58,7 +80,10 @@ def make_next_round(
             purpose="pairwise_explore",
             rubric=rubric,
             delta_scale=1.0,
-            meta={"schedule": proposal.schedule},  # metaにスケジュール保存
+            meta={
+                "schedule": proposal.schedule,
+                "phase_round_index": phase_round_index,
+            },
         )
         return append_round(session, rr)
 
@@ -141,6 +166,16 @@ def make_next_round(
         ]
         cands = make_candidates_from_X(rid, slots=["A", "B"], X=X2)
 
+    phase_round_index = _phase_round_index_for_intent(session, intent="reprint")
+    sched = schedule_for_round(phase_round_index, rubric=rubric)
+
+    schedule_meta = {
+        "active_keys": list(sched.active_keys),
+        "delta": sched.delta,
+        "micro_ratio": sched.micro_ratio,
+        "center_source": "reprint_simple",
+    }
+
     rr = RoundRecord(
         round_id=rid.value,
         round_index=round_index,
@@ -150,6 +185,11 @@ def make_next_round(
         purpose="reprint",
         rubric=rubric,
         delta_scale=float(delta_scale),
-        meta={"source_round": prev.round_index, "delta_applied": delta},
+        meta={
+            "source_round": prev.round_index,
+            "delta_applied": delta,
+            "phase_round_index": phase_round_index,
+            "schedule": schedule_meta,
+        },
     )
     return append_round(session, rr)

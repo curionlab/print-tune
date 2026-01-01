@@ -28,6 +28,8 @@ def propose_from_session_for_round(
     next_round_index: int,
     rubric: Optional[str] = None,
 ) -> NextProposal:
+    # next_round_index は「実ラウンド番号」ではなく「スケジュール段階(phase)」として扱う
+    
     # 1. GP学習データの構築
     data = build_torch_data(session)
     model = fit_pairwise_gp(data.train_X, data.train_comp)
@@ -65,15 +67,4 @@ def propose_from_session_for_round(
         },
     )
 
-
-#---以下削除
-from ..optimizer.bounds import default_bounds
-
-def propose_from_session(session) -> NextProposal:
-    data = build_torch_data(session)
-    model = fit_pairwise_gp(data.train_X, data.train_comp)
-    bounds = default_bounds(d=data.train_X.shape[-1])
-    proposed = propose_next_pair(model, bounds=bounds, q=2)
-    X_next = proposed.X_next.detach().cpu().tolist()
-    return NextProposal(X_next=X_next)
 
