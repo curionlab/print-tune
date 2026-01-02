@@ -1,0 +1,14 @@
+# app/requirements.txt
+
+# App runtime (pin is optional; keep minimal)
+streamlit>=1.52.2,<2
+pillow>=12,<13
+numpy>=2.4,<3
+
+# PyTorch stack (pip packages)
+torch
+gpytorch
+botorch
+
+# Install this repo as a package so `import printtune` works
+-e ..
