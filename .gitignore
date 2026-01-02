@@ -1,7 +1,8 @@
 # pixi environments
 .pixi/*
 !.pixi/config.toml
-data/*
+data/output/*
+data/input/test/*
 */__pycache__/*
 *.pyc*
 docs/dev/*

@@ -14,6 +14,7 @@ from .imaging.sheet_layout import SheetCell, render_sheet_2x2
 from .imaging.params_adapter import candidate_to_global_params
 from .imaging.pipeline import render_image_with_global_params
 from .imaging.transform import apply_simple_transform
+from .imaging.frame import compose_with_evaluation_frame
 from .io.paths import artifacts_dir
 from .botorch.dataset import build_comparisons_from_choice
 
@@ -56,7 +57,14 @@ def create_round1(session: SessionRecord) -> RoundRecord:
     )
 
 
-def render_round_sheet(sample_img: Image.Image, round_rec: RoundRecord, out_dir: Path) -> Path:
+def render_round_sheet(sample_img: Image.Image, round_rec: RoundRecord, out_dir: Path, use_evaluation_frame: bool = True) -> Path:
+    """
+    Args:
+        sample_img: 元の写真
+        round_rec: ラウンドレコード
+        out_dir: 出力ディレクトリ
+        use_evaluation_frame: 評価用フレームを適用するか（デフォルト: True）
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
 
     blank = Image.new("RGB", sample_img.size, (255, 255, 255))
@@ -65,6 +73,9 @@ def render_round_sheet(sample_img: Image.Image, round_rec: RoundRecord, out_dir:
     for c in round_rec.candidates:
         gp = candidate_to_global_params(c)
         img_k = render_image_with_global_params(sample_img, gp)
+        # 評価用フレームを適用
+        if use_evaluation_frame:
+            img_k = compose_with_evaluation_frame(img_k)
         cells.append(SheetCell(slot=c.slot, candidate_id=c.candidate_id, image=img_k))
 
     while len(cells) < 4:

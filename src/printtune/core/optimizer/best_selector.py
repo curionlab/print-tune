@@ -24,6 +24,25 @@ def extract_last_chosen_globals(session: SessionRecord) -> dict:
     g = session.rounds[-1].candidates[0].params["globals"]
     return {k: float(g[k]) for k in PARAM_KEYS_V1}
 
+def has_finalized_best_params(session: SessionRecord) -> bool:
+    """
+    セッションに確定したbest_paramsがあるかどうかを判定する。
+    
+    best_paramsが確定する条件:
+    - 少なくとも1回の"chosen"判定が存在する
+    
+    Args:
+        session: セッションレコード
+        
+    Returns:
+        best_paramsが確定している場合True
+    """
+    for rr in session.rounds:
+        j = rr.judgment or {}
+        if j.get("kind") == "chosen":
+            return True
+    return False
+
 def estimate_best_params(session: SessionRecord) -> dict[str, float]:
     """
     PairwiseGPの事後平均を最大化するパラメータを推定する。
@@ -31,6 +50,11 @@ def estimate_best_params(session: SessionRecord) -> dict[str, float]:
     アプローチ:
     - 観測済み候補（train_X）の中で事後平均が最大のものを選ぶ
     - データ不足時は extract_last_chosen_globals にフォールバック
+    
+    注意:
+    - chosen判定が存在しない場合、extract_last_chosen_globals()は
+      最後のラウンドの最初の候補を返すが、これは「確定したbest」ではない
+    - この関数は、chosen判定が存在する場合にのみ呼び出すべき
     
     Returns:
         globals形式のパラメータ辞書

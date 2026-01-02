@@ -139,7 +139,7 @@ if original_filename == "sample" and sess.sample_image_relpath and sess.sample_i
 st.subheader("Target (Original Screen View)")
 st.caption("この画面上の見た目に合うように、印刷結果を選んでください。")
 # 画像を大きく表示（オリジナル形式のまま）
-st.image(img, caption=original_filename, width='stretch')
+st.image(img, caption=original_filename, data/input/sample.png)
 
 st.divider()
 
@@ -243,13 +243,10 @@ else:
         if len(sess.rounds) >= 10: # MAX_ROUNDS定数参照推奨
                 st.warning("最大ラウンド数に達しました。")
 
-        # 2. 保存 & Best Params 更新（chosen判定の場合のみ） & リロード
+        # 2. 保存 & Best Params 更新 & リロード
         save_session(sess_path, sess)
-        # chosen判定の場合のみbest_paramsを更新
-        if kind == "chosen":
-            from printtune.core.optimizer.best_selector import estimate_best_params
-            g = estimate_best_params(sess)
-            save_best_params(best_params_json_path(sid), g)
+        g = estimate_best_params(sess)
+        save_best_params(best_params_json_path(sid), g)
         st.success("Saved. Reloading...")
         time.sleep(0.5)
         st.rerun()
@@ -273,13 +270,9 @@ st.subheader("Verification & Download")
 
 # best params の手動保存ボタン（自動保存を入れたので必須ではないが、明示的にやりたい場合用）
 if st.button("Force save current best params"):
-    from printtune.core.optimizer.best_selector import has_finalized_best_params
-    if has_finalized_best_params(sess):
-        g = estimate_best_params(sess)
-        save_best_params(best_params_json_path(sid), g)
-        st.success("Best params updated.")
-    else:
-        st.warning("Best paramsを更新するには、少なくとも1回の「chosen」判定が必要です。")
+    g = estimate_best_params(sess)
+    save_best_params(best_params_json_path(sid), g)
+    st.success("Best params updated.")
 
 # 検証画像アップロード
 uploaded = st.file_uploader("検証画像（JPEG/PNG）をアップロード", type=["jpg", "jpeg", "png"], key="verify_png")
