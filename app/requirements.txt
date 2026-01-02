@@ -11,4 +11,4 @@ gpytorch
 botorch
 
 # Install this repo as a package so `import printtune` works
--e ..
+-e file:///mount/src/print-tune
