@@ -31,16 +31,43 @@ def new_session(sample_image_relpath: str) -> SessionRecord:
         comparisons_global=[],
     )
 
+# src/printtune/core/session_runner.py
+
 def create_round1(session: SessionRecord) -> RoundRecord:
+    # default_globals_v1 を import
+    from .optimizer.param_space_v1 import PARAM_KEYS_V1, default_globals_v1
+    
     rid = RoundId.new(SessionId(session.session_id), round_index=1)
+    
+    # 診断用: 差分定義 (中心 0.0)
+    # A: Baseline, B: Temp+3.0, C: Tint+5.0, D: Exposure-0.25
+    diagnostic_diffs = [
+        [0.0] * len(PARAM_KEYS_V1), # A
+        [3.0 if k == "temp" else 0.0 for k in PARAM_KEYS_V1], # B
+        [5.0 if k == "tint" else 0.0 for k in PARAM_KEYS_V1], # C
+        [-0.25 if k == "exposure_stops" else 0.0 for k in PARAM_KEYS_V1], # D
+    ]
+        
     candidates: list[Candidate] = []
-    for spec in L4:
-        cid = CandidateId.new(rid, slot=spec.slot)
+    slots = ["A", "B", "C", "D"]
+    
+    for slot, diff_vec in zip(slots, diagnostic_diffs):
+        cid = CandidateId.new(rid, slot=slot)
+        
+        # 【修正】ここで「デフォルト値 + 差分」を計算して絶対値(globals)にする
+        g = default_globals_v1()
+        for k, diff in zip(PARAM_KEYS_V1, diff_vec):
+            g[k] += diff
+        
         candidates.append(Candidate(
             candidate_id=cid.value,
-            slot=spec.slot,
-            params={"globals": factors_to_globals(spec.factors)},
+            slot=slot,
+            params={"globals": g},
         ))
+
+    from .policy_axes import schedule_for_round
+    sched = schedule_for_round(1)
+    
     return RoundRecord(
         round_id=rid.value,
         round_index=1,
@@ -48,14 +75,13 @@ def create_round1(session: SessionRecord) -> RoundRecord:
         candidates=candidates,
         mode="oa",
         purpose="initial_oa",
-        delta_scale=1.0,
-                meta={"schedule": {
-             "active_keys": ["exposure_stops", "contrast", "gamma", "temp"], # OAの意図もmetaに残すと丁寧
-             "delta": 1.0,
-             "micro_ratio": 0.0
+        delta_scale=1.0, # 初期値
+        meta={"schedule": {
+             "active_keys": list(sched.active_keys),
+             "delta": sched.delta,
+             "micro_ratio": sched.micro_ratio
         }}
     )
-
 
 def render_round_sheet(sample_img: Image.Image, round_rec: RoundRecord, out_dir: Path, use_evaluation_frame: bool = True) -> Path:
     """

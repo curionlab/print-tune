@@ -1,4 +1,4 @@
-# src/printmatch/core/imaging/final.py
+# src/printtune/core/imaging/final.py
 from __future__ import annotations
 
 from PIL import Image

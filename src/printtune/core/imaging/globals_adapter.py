@@ -1,4 +1,4 @@
-# src/printmatch/core/imaging/globals_adapter.py
+# src/printtune/core/imaging/globals_adapter.py
 from __future__ import annotations
 from .parametric_linear import GlobalParams
 

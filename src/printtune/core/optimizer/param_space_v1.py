@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Final
 
 # まずは6軸（5〜8の範囲内）
 # temp/tintは本来RAWやXYZ/LMSで扱うのが筋ですが、フェーズ1では「人間が操作できる軸」を
@@ -16,6 +17,20 @@ PARAM_KEYS_V1 = [
     "tint",             # 緑-マゼンタ軸（正規化）
     "gamma",            # 追加：暗部持ち上げ/潰し回避
 ]
+
+# エンジン側の Identity（無補正）の値を定義
+DEFAULT_GLOBALS_V1: Final[dict[str, float]] = {
+    "exposure_stops": 0.0,
+    "contrast": 1.0,
+    "saturation": 1.0,
+    "temp": 0.0,
+    "tint": 0.0,
+    "gamma": 1.0,
+}
+
+def default_globals_v1() -> dict[str, float]:
+    """V1パラメータ空間における Identity (無補正) のパラメータセットを返す"""
+    return dict(DEFAULT_GLOBALS_V1)
 
 @dataclass(frozen=True)
 class ParamVectorV1:

@@ -59,14 +59,21 @@ def make_next_round(
     rubric: Optional[str] = None,
     delta_scale: float = 1.0,
 ) -> SessionRecord:
+    """
+    次のラウンドを作成する主要なエントリーポイント。
+    """
+    # フェーズとしてのラウンド番号（スケジュール進行に使う）と
+    # セッション内での通算ラウンド番号を取得
+    phase_round_index = _phase_round_index_for_intent(session, intent)
     round_index = _next_round_index(session)
     rid = _new_round_id(session, round_index)
 
     # 1. pairwise_explore: BoTorch提案を使う（基本ルート）
     if intent == "pairwise_explore":
-        phase_round_index = _phase_round_index_for_intent(session, intent="pairwise_explore")
+        from .botorch.update_loop import propose_from_session_for_round
+        # rubric を考慮したスケジュールに基づいて次候補を提案
         proposal = propose_from_session_for_round(session, phase_round_index, rubric=rubric)
-
+        
         cands = make_candidates_from_X(
             round_id=rid,
             slots=["A", "B"],
@@ -83,106 +90,88 @@ def make_next_round(
             rubric=rubric,
             delta_scale=1.0,
             meta={
-                "schedule": proposal.schedule,
-                "phase_round_index": phase_round_index,
+                "schedule": proposal.schedule, 
+                "phase_round_index": phase_round_index
             },
         )
         return append_round(session, rr)
 
-    # 2) reprint: BoTorchベースの「制約付き再提案」へ移行
+    # 直前ラウンド情報を取得（rejudge/reprint用）
     prev = session.rounds[-1]
-    phase_round_index = _phase_round_index_for_intent(session, intent="reprint")
 
-    if prev.mode == "oa":
-        # OA reprint は「4択で方向性を絞る」ためのものなので、
-        # 直交表(=4候補の相対差)を壊さずに "全体を同じ方向へ" 動かす。
-        # both_bad 等で正解(center)が無い状態でも意味があるように、ランダムは使わない。
-
-        # scheduleは rubric を反映したactive_keysに寄せる（優先キーの並び替え等）
-        phase_round_index = _phase_round_index_for_intent(session, intent="reprint")
-        sched = schedule_for_round(phase_round_index, rubric=rubric)
-
-        # どの軸を動かすか:
-        # - exposure_stops が active ならそれ（「全体がダメ」を救う最優先）
-        # - なければ scheduleの先頭キー（rubric反映後の並び）を採用
-        if "exposure_stops" in list(sched.active_keys):
-            shift_key = "exposure_stops"
-        else:
-            shift_key = list(sched.active_keys)[0]
-
-        # シフト方向は決定的に交互 (+, -, +, ...) にする（ランダム禁止）
-        n_oa_reprint = sum(
-            1
-            for r in session.rounds
-            if r.purpose == "reprint" and getattr(r, "mode", None) == "oa"
-        )
-        shift_sign = 1.0 if (n_oa_reprint % 2 == 0) else -1.0
-
-        # 旧ノウハウ: OA reprint は delta=0.35 * delta_scale を使う
-        shift_delta = 0.35 * float(delta_scale)
-
-        key_to_index = {k: i for i, k in enumerate(PARAM_KEYS_V1)}
-        idx = key_to_index.get(shift_key, 0)
-
-        def clamp(v: float) -> float:
-            return max(-2.0, min(2.0, v))
-
-        X_next: list[list[float]] = []
-        for c in prev.candidates:
-            base = _extract_x_from_candidate(c)
-            shifted = [
-                clamp(base[i] + (shift_sign * shift_delta if i == idx else 0.0))
-                for i in range(len(base))
-            ]
-            X_next.append(shifted)
-
+    # 2. rejudge: 直前と同じXで再生成（IDだけ振り直し）
+    if intent == "rejudge":
+        prev_X = [_extract_x_from_candidate(c) for c in prev.candidates]
         slots = [c.slot for c in prev.candidates]
-        schedule_meta = {
-            "active_keys": list(sched.active_keys),
-            "delta": float(sched.delta),
-            "micro_ratio": float(sched.micro_ratio),
-            "center_source": "oa_global_shift",
-            "rubric": rubric,
-            "shift_key": shift_key,
-            "shift_sign": shift_sign,
-            "shift_delta": shift_delta,
-        }
-    else:
-        # pairwiseは2候補
-        seed = random.randint(0, 2**31 - 1)
-        p = propose_reprint_pair(
-            session=session,
-            phase_round_index=phase_round_index,
+        
+        cands = make_candidates_from_X(rid, slots=slots, X=prev_X)
+
+        rr = RoundRecord(
+            round_id=rid.value,
+            round_index=round_index,
+            created_at=now_iso(),
+            candidates=cands,
+            mode=prev.mode,
+            purpose="rejudge",
+            rubric=rubric,
+            delta_scale=1.0,
+            meta={
+                "source_round": prev.round_index, 
+                "phase_round_index": phase_round_index
+            },
+        )
+        return append_round(session, rr)
+
+    # 3. reprint: 探索幅を増やして再提示（確定仕様）
+    if intent == "reprint":
+        from .policy_axes import schedule_for_round
+        # スケジュールから基準となるdeltaと、動かすべき軸(rubricに基づく)を取得
+        sched = schedule_for_round(phase_round_index, rubric=rubric, intent="reprint")
+        applied_delta = sched.delta * delta_scale
+
+        # 直前のスロットA（基準点）をベースに、指定された軸だけを±動かす
+        base_X = _extract_x_from_candidate(prev.candidates[0])
+        
+        def clamp(v: float) -> float:
+            return max(-1.0, min(1.0, v))
+
+        # 新しい候補の生成：active_keysに含まれる軸だけを ±applied_delta 動かす
+        new_X = []
+        # A' : baseline + applied_delta (指定軸のみ)
+        new_X.append([
+            clamp(val + (applied_delta if PARAM_KEYS_V1[i] in sched.active_keys else 0.0))
+            for i, val in enumerate(base_X)
+        ])
+        # B' : baseline - applied_delta (指定軸のみ)
+        new_X.append([
+            clamp(val - (applied_delta if PARAM_KEYS_V1[i] in sched.active_keys else 0.0))
+            for i, val in enumerate(base_X)
+        ])
+
+        # reprintは、診断をしやすくするため常に2枚比較（Pairwise）とする
+        slots = ["A", "B"]
+        cands = make_candidates_from_X(rid, slots=slots, X=new_X)
+
+        rr = RoundRecord(
+            round_id=rid.value,
+            round_index=round_index,
+            created_at=now_iso(),
+            candidates=cands,
+            mode="pairwise",
+            purpose="reprint",
             rubric=rubric,
             delta_scale=float(delta_scale),
-            q=2,
-            seed=seed,
+            meta={
+                "source_round": prev.round_index,
+                "phase_round_index": phase_round_index,
+                "delta_applied": applied_delta,
+                "schedule": {
+                    "active_keys": list(sched.active_keys),
+                    "delta": sched.delta,
+                    "micro_ratio": sched.micro_ratio
+                }
+            },
         )
-        X_next = p.X_next
-        slots = ["A", "B"]
-        schedule_meta = dict(p.schedule)
-        schedule_meta["seeds"] = [seed]
-        schedule_meta["q_total"] = 2
+        return append_round(session, rr)
 
-    cands = make_candidates_from_X(
-        round_id=rid,
-        slots=slots,
-        X=X_next,
-    )
-
-    rr = RoundRecord(
-        round_id=rid.value,
-        round_index=round_index,
-        created_at=now_iso(),
-        candidates=cands,
-        mode=prev.mode,
-        purpose="reprint",
-        rubric=rubric,
-        delta_scale=float(delta_scale),
-        meta={
-            "source_round": prev.round_index,
-            "phase_round_index": phase_round_index,
-            "schedule": schedule_meta,
-        },
-    )
-    return append_round(session, rr)
+    raise ValueError(f"unknown intent: {intent}")

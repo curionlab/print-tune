@@ -26,11 +26,11 @@ class AxisSchedule:
 
 # Round5は全軸を再度開放（相互作用吸収）
 SCHEDULE: list[AxisSchedule] = [
-    AxisSchedule(1, ["exposure_stops","contrast","gamma","temp","tint"], delta=0.60, micro_ratio=0.20),
-    AxisSchedule(2, ["exposure_stops","contrast","gamma"], delta=0.35, micro_ratio=0.15),
-    AxisSchedule(3, ["temp","tint"], delta=0.30, micro_ratio=0.15),
-    AxisSchedule(4, ["saturation","gamma"], delta=0.25, micro_ratio=0.15),
-    AxisSchedule(5, ["exposure_stops","contrast","gamma","temp","tint","saturation"], delta=0.15, micro_ratio=0.10),
+    AxisSchedule(1, ["exposure_stops", "temp", "tint"], delta=0.25, micro_ratio=0.0),
+    AxisSchedule(2, ["exposure_stops", "contrast", "gamma"], delta=0.35, micro_ratio=0.15),
+    AxisSchedule(3, ["temp", "tint"], delta=0.30, micro_ratio=0.15),
+    AxisSchedule(4, ["saturation", "gamma"], delta=0.25, micro_ratio=0.15),
+    AxisSchedule(5, ["exposure_stops", "contrast", "gamma", "temp", "tint", "saturation"], delta=0.15, micro_ratio=0.10),
 ]
 
 
@@ -38,8 +38,8 @@ RUBRIC_TO_PRIORITY_KEYS: dict[str, list[str]] = {
     "overall": [],
     "skin": ["temp", "tint", "saturation"],
     "neutral_gray": ["temp", "tint"],
-    "saturation": ["saturation", "temp"],
-    "shadows": ["exposure_stops", "gamma", "contrast"],
+    "saturation": ["saturation"],              # tempを削除
+    "shadows": ["gamma", "exposure_stops"],     # contrastを削除
     "highlights": ["exposure_stops", "contrast"],
 }
 
@@ -77,15 +77,15 @@ def _apply_priority_keys(active_keys: Sequence[str], priority_keys: Sequence[str
 
     return out
 
-
-def schedule_for_round(round_index: int, rubric: Optional[str] = None) -> AxisSchedule:
+def schedule_for_round(round_index: int, rubric: Optional[str] = None, intent: Optional[str] = None) -> AxisSchedule:
     """
     Args:
         round_index: 1始まり。
-        rubric: UIで選択された観点。Noneならデフォルトスケジュール。
+        rubric: UIで選択された観点。
+        intent: "reprint"など。
 
     Returns:
-        Rubricを反映したAxisSchedule。
+        Rubricとインテントを反映したAxisSchedule。
     """
     base = _base_schedule_for_round(round_index)
 
@@ -96,7 +96,12 @@ def schedule_for_round(round_index: int, rubric: Optional[str] = None) -> AxisSc
     if not priority:
         return base
 
-    new_active_keys = _apply_priority_keys(base.active_keys, priority)
+    if intent == "reprint":
+        # reprintの場合は、rubricで指定された軸以外を動かさない
+        new_active_keys = priority
+    else:
+        # 通常探索時はベースのスケジュールにrubric軸を優先的に混ぜる
+        new_active_keys = _apply_priority_keys(base.active_keys, priority)
 
     return AxisSchedule(
         round_index=base.round_index,
